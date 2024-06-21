@@ -7,7 +7,7 @@ from .processing_queue import ProcessingQueue
 from .task import Task
 from .block import BlockStatus
 
-from typing import List
+from typing import Any, Dict, List
 import collections
 import logging
 
@@ -41,9 +41,11 @@ class Scheduler:
             self.dependency_graph.downstream, self.dependency_graph.upstream
         )
 
-        self.task_map = {}
-        self.task_states = collections.defaultdict(TaskState)
-        self.task_queues = collections.defaultdict(ProcessingQueue)
+        self.task_map: Dict[Any, Task] = {}
+        self.task_states: Dict[Any, TaskState] = collections.defaultdict(TaskState)
+        self.task_queues: Dict[Any, ProcessingQueue] = collections.defaultdict(
+            ProcessingQueue
+        )
 
         # root tasks is a mapping from task_id -> (num_roots, root_generator)
         roots = self.dependency_graph.roots()
@@ -90,19 +92,17 @@ class Scheduler:
                 pre_check_ret = self.__precheck(block)
                 if pre_check_ret:
                     logger.debug(
-                        "Skipping block (%s); already processed.",
-                        block.block_id)
+                        "Skipping block (%s); already processed.", block.block_id
+                    )
                     block.status = BlockStatus.SUCCESS
                     self.task_states[task_id].skipped_count += 1
                     # adding block so release_block() can remove it
-                    self.task_queues[task_id].processing_blocks.add(
-                        block.block_id)
+                    self.task_queues[task_id].processing_blocks.add(block.block_id)
                     self.release_block(block)
                     continue
                 else:
                     self.task_states[task_id].started = True
-                    self.task_queues[task_id].processing_blocks.add(
-                        block.block_id)
+                    self.task_queues[task_id].processing_blocks.add(block.block_id)
                     return block
 
             else:
@@ -158,15 +158,13 @@ class Scheduler:
         else:
             raise RuntimeError(
                 f"Unexpected status for released block: {block.status} {block}"
-                )
+            )
 
     def __init_task(self, task):
         if task.task_id not in self.task_map:
             self.task_map[task.task_id] = task
             num_blocks = self.dependency_graph.num_blocks(task.task_id)
-            self.task_states[
-                task.task_id
-            ].total_block_count = num_blocks
+            self.task_states[task.task_id].total_block_count = num_blocks
 
             for upstream_task in task.requires():
                 self.__init_task(upstream_task)
@@ -179,8 +177,7 @@ class Scheduler:
         self.task_states[block.task_id].ready_count += 1
 
     def __remove_from_processing_blocks(self, block):
-        self.task_queues[block.task_id].processing_blocks.remove(
-            block.block_id)
+        self.task_queues[block.task_id].processing_blocks.remove(block.block_id)
         self.task_states[block.task_id].processing_count -= 1
 
     def __update_ready_queue(self, ready_blocks):
@@ -200,6 +197,5 @@ class Scheduler:
             else:
                 return False
         except Exception:
-            logger.exception(
-                f"pre_check() exception for block {block.block_id}")
+            logger.exception(f"pre_check() exception for block {block.block_id}")
             return False

@@ -4,12 +4,13 @@ import logging
 import multiprocessing
 import os
 import queue
+import dill
 
 logger = logging.getLogger(__name__)
 
 
-class Worker():
-    '''Create and start a worker, running a user-specified function in its own
+class Worker:
+    """Create and start a worker, running a user-specified function in its own
     process.
 
     Args:
@@ -24,9 +25,10 @@ class Worker():
 
               If given, the context will be passed on to the worker via
               environment variables.
-    '''
+    """
 
-    __next_id = multiprocessing.Value('L')
+    __next_id = multiprocessing.Value("L")
+    _spawn_function = None
 
     @staticmethod
     def get_next_id():
@@ -43,25 +45,32 @@ class Worker():
             self.context = Context()
         else:
             self.context = context.copy()
-        self.context['worker_id'] = self.worker_id
+        self.context["worker_id"] = self.worker_id
         self.error_queue = error_queue
         self.process = None
 
         self.start()
 
+    @property
+    def spawn_function(self):
+        return dill.loads(self._spawn_function)
+
+    @spawn_function.setter
+    def spawn_function(self, value):
+        self._spawn_function = dill.dumps(value)
+
     def start(self):
-        '''Start this worker. Note that workers are automatically started when
-        created. Use this function to re-start a stopped worker.'''
+        """Start this worker. Note that workers are automatically started when
+        created. Use this function to re-start a stopped worker."""
 
         if self.process is not None:
             return
 
-        self.process = multiprocessing.Process(
-            target=lambda: self.__spawn_wrapper())
+        self.process = multiprocessing.Process(target=self._spawn_wrapper)
         self.process.start()
 
     def stop(self):
-        '''Stop this worker.'''
+        """Stop this worker."""
 
         if self.process is None:
             return
@@ -75,17 +84,17 @@ class Worker():
         logger.debug("%s terminated", self)
         self.process = None
 
-    def __spawn_wrapper(self):
-        '''Thin wrapper around the user-specified spawn function to set
-        environment variables, redirect output, and to capture exceptions.'''
+    def _spawn_wrapper(self):
+        """Thin wrapper around the user-specified spawn function to set
+        environment variables, redirect output, and to capture exceptions."""
 
         try:
 
             os.environ[self.context.ENV_VARIABLE] = self.context.to_env()
 
             log_base = daisy_logging.get_worker_log_basename(
-                self.worker_id,
-                self.context.get('task_id', None))
+                self.worker_id, self.context.get("task_id", None)
+            )
             daisy_logging.redirect_stdouterr(log_base)
 
             self.spawn_function()
@@ -98,8 +107,8 @@ class Worker():
                     self.error_queue.put(e, timeout=1)
                 except queue.Full:
                     logger.error(
-                        "%s failed to forward exception, error queue is full",
-                        self)
+                        "%s failed to forward exception, error queue is full", self
+                    )
 
         except KeyboardInterrupt:
 

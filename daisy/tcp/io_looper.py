@@ -1,13 +1,14 @@
 import logging
 import os
 import threading
+from typing import Dict
 import tornado.ioloop
 
 logger = logging.getLogger(__name__)
 
 
 class IOLooper:
-    '''Base class for every class that needs access to tornado's IOLoop in a
+    """Base class for every class that needs access to tornado's IOLoop in a
     separate thread.
 
     Attributes:
@@ -16,10 +17,10 @@ class IOLooper:
 
             The IO loop to be used in subclasses. Will run in a singleton
             thread per process.
-    '''
+    """
 
-    threads = {}
-    ioloops = {}
+    threads: Dict[int, threading.Thread] = {}
+    ioloops: Dict[int, tornado.ioloop.IOLoop] = {}
 
     @staticmethod
     def clear():
@@ -38,8 +39,8 @@ class IOLooper:
 
             logger.debug("Starting io loop for process %d...", pid)
             IOLooper.threads[pid] = threading.Thread(
-                target=self.ioloop.start,
-                daemon=True)
+                target=self.ioloop.start, daemon=True
+            )
             IOLooper.threads[pid].start()
 
         else:

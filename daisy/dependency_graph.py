@@ -93,9 +93,16 @@ class BlockwiseDependencyGraph:
         fit: str,
         total_read_roi: Optional[Roi] = None,
         total_write_roi: Optional[Roi] = None,
+        block_filter=None,
     ):
         self.block_read_roi = block_read_roi
         self.block_write_roi = block_write_roi
+        self.block_filter = block_filter
+        # When a block_filter is provided, the surviving blocks per level are
+        # materialized once during __init__ (see _apply_block_filter) so that
+        # subsequent num_blocks / level_blocks / num_roots calls see only the
+        # filtered set. Stored as a list[list[Block]] indexed by level.
+        self._filtered_blocks_by_level = None
         self.read_write_context = (
             block_write_roi.begin - block_read_roi.begin,
             block_read_roi.end - block_write_roi.end,
@@ -144,12 +151,28 @@ class BlockwiseDependencyGraph:
         self._level_offsets = self.compute_level_offsets()
         self._level_conflicts = self.compute_level_conflicts()
 
+        # Eagerly prune blocks if a filter was supplied.
+        if self.block_filter is not None:
+            self._apply_block_filter()
+
+    def _apply_block_filter(self):
+        """Materialize every level's blocks once and keep only those passing
+        ``block_filter``. After this, ``num_blocks``, ``num_roots``, and
+        ``level_blocks`` all reflect the surviving set.
+        """
+        self._filtered_blocks_by_level = [
+            [b for b in self._unfiltered_level_blocks(level) if self.block_filter(b)]
+            for level in range(len(self._level_offsets))
+        ]
+
     @property
     def num_levels(self):
         return len(self._level_offsets)
 
     @property
     def num_blocks(self):
+        if self._filtered_blocks_by_level is not None:
+            return sum(len(b) for b in self._filtered_blocks_by_level)
         num_blocks = 0
         for level in range(self.num_levels):
             num_blocks += self._num_level_blocks(level)
@@ -177,6 +200,8 @@ class BlockwiseDependencyGraph:
         return fit_block
 
     def num_roots(self):
+        if self._filtered_blocks_by_level is not None:
+            return len(self._filtered_blocks_by_level[0])
         return self._num_level_blocks(0)
 
     def _num_level_blocks(self, level):
@@ -206,6 +231,12 @@ class BlockwiseDependencyGraph:
         return num_blocks
 
     def level_blocks(self, level):
+        if self._filtered_blocks_by_level is not None:
+            yield from self._filtered_blocks_by_level[level]
+            return
+        yield from self._unfiltered_level_blocks(level)
+
+    def _unfiltered_level_blocks(self, level):
         for block_offset in self._compute_level_block_offsets(level):
             block = Block(
                 self.total_read_roi,
@@ -641,6 +672,7 @@ class DependencyGraph:
             task.read_write_conflict,
             task.fit,
             total_read_roi=task.total_roi,
+            block_filter=getattr(task, "block_filter", None),
         )
 
     def __enumerate_all_dependencies(self):

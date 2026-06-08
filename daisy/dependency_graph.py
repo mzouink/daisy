@@ -4,6 +4,7 @@ from .coordinate import Coordinate
 from .roi import Roi
 
 import numpy as np
+from tqdm import tqdm
 
 from itertools import product
 import logging
@@ -159,11 +160,46 @@ class BlockwiseDependencyGraph:
         """Materialize every level's blocks once and keep only those passing
         ``block_filter``. After this, ``num_blocks``, ``num_roots``, and
         ``level_blocks`` all reflect the surviving set.
+
+        Walks all blocks across all levels with a tqdm progress bar so callers
+        can see how the eager filter is advancing.
         """
-        self._filtered_blocks_by_level = [
-            [b for b in self._unfiltered_level_blocks(level) if self.block_filter(b)]
-            for level in range(len(self._level_offsets))
-        ]
+        num_levels = len(self._level_offsets)
+        # Analytical per-level counts let tqdm show a real total without
+        # exhausting the underlying generator.
+        per_level_totals = [self._num_level_blocks(level) for level in range(num_levels)]
+        total = int(sum(per_level_totals))
+
+        logger.info(
+            "Task %s: starting block_filter on %d candidate blocks across %d levels...",
+            self.task_id,
+            total,
+            num_levels,
+        )
+
+        kept = []
+        with tqdm(
+            total=total,
+            desc=f"block_filter({self.task_id})",
+            unit="block",
+        ) as pbar:
+            for level in range(num_levels):
+                level_kept = []
+                for b in self._unfiltered_level_blocks(level):
+                    if self.block_filter(b):
+                        level_kept.append(b)
+                    pbar.update(1)
+                kept.append(level_kept)
+
+        self._filtered_blocks_by_level = kept
+        surviving = sum(len(k) for k in kept)
+        logger.info(
+            "Task %s: block_filter kept %d / %d blocks (%.2f%%) — workers will only see these.",
+            self.task_id,
+            surviving,
+            total,
+            (100.0 * surviving / total) if total else 0.0,
+        )
 
     @property
     def num_levels(self):
